@@ -518,6 +518,35 @@ class GoogleDriveFile(ApiAttributeMixin, ApiResource):
         """
         self._FilesDelete(param=param)
 
+
+    @LoadAuth
+    def Copy(self, target_folder, new_title = None):
+        """Copy this file to a new location.
+
+        :param target_folder: Folder where the file will be copied.
+        :type target_folder: GoogleDriveFile.
+        :param new_title: Name of the new file.
+        :type new_title: str.
+        """
+
+        if new_title is None:
+            new_title = self["title"]
+
+        body = {
+            "parents": [{"id": target_folder["id"]}],
+            "title": new_title 
+            }
+            
+        try:
+            self.auth.service.files().copy(
+                fileId=self["id"], 
+                supportsAllDrives=True,
+                body=body
+            ).execute()
+        except errors.HttpError as error:
+            raise ApiRequestError(error)
+
+
     def InsertPermission(self, new_permission, param=None):
         """Insert a new permission. Re-fetches all permissions after call.
 
