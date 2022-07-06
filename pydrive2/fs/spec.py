@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import errno
 import io
 import logging
@@ -14,7 +16,7 @@ from tqdm.utils import CallbackIOWrapper
 from pydrive2.drive import GoogleDrive
 from pydrive2.fs.utils import IterStream
 
-logger = logging.getLogger(__name__)
+log = logging.getLogger(__name__)
 
 FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 
@@ -37,7 +39,7 @@ def _gdrive_retry(func):
                 "rateLimitExceeded",
             ]
         if result:
-            logger.debug(f"Retrying GDrive API call, error: {exc}.")
+            log.debug(f"Retrying GDrive API call, error: {exc}.")
 
         return result
 
@@ -46,7 +48,7 @@ def _gdrive_retry(func):
         16,
         timeout=lambda a: min(0.5 * 1.618**a, 20),
         filter_errors=should_retry,
-    )(func)
+    )(func)  # type: ignore
 
 
 class GDriveFileSystem(AbstractFileSystem):
@@ -99,7 +101,7 @@ class GDriveFileSystem(AbstractFileSystem):
         if self.root != "root" and self.root != "appDataFolder":
             drive_id = self._gdrive_shared_drive_id(self.root)
             if drive_id:
-                logger.debug(
+                log.debug(
                     "GDrive remote '{}' is using shared drive id '{}'.".format(
                         self.path, drive_id
                     )
@@ -187,6 +189,9 @@ class GDriveFileSystem(AbstractFileSystem):
 
     def _get_item_id(self, path, create=False, use_cache=True, hint=None):
         bucket, base = self.split_path(path)
+
+        log.debug(f"path: {path}, bucket: {bucket}, base: {base}")
+
         assert bucket == self.root
 
         item_ids = self._path_to_item_ids(base, create, use_cache)
@@ -246,8 +251,10 @@ class GDriveFileSystem(AbstractFileSystem):
             metadata["checksum"] = gdrive_file["md5Checksum"]
         return metadata
 
-    def ls(self, path, detail=False):
+    def ls(self, path, detail=False) -> list[dict] | None:
         bucket, base = self.split_path(path)
+
+        log.debug(f"bucket: {bucket}, base: {base}")
 
         cached = base in self._ids_cache["dirs"]
         if cached:
