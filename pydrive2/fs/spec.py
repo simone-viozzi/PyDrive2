@@ -534,13 +534,28 @@ class GDriveFileSystem(AbstractFileSystem):
         return item
 
     def cp_file(self, lpath, rpath, **kwargs):
-        """In-memory streamed copy"""
-        with self.open(lpath) as stream:
-            # IterStream objects doesn't support full-length
-            # seek() calls, so we have to wrap the data with
-            # an external buffer.
-            buffer = io.BytesIO(stream.read())
-            self.upload_fobj(buffer, rpath)
+        """copy a single file or folder"""
+
+        file_id = self._get_item_id(lpath)
+
+        file = self.client.CreateFile({"id": file_id})
+
+        if file["mimeType"] == FOLDER_MIME_TYPE:
+            self.mkdir(rpath)
+        else:
+            dst_parent_id = self._get_item_id(self._parent(rpath), create=True)
+            dst_parent = self.client.CreateFile({"id": dst_parent_id})
+            file.Copy(dst_parent, posixpath.basename(rpath.rstrip("/")))
+
+    def mkdir(self, path, create_parents=True, **kwargs):
+        """Create directory entry at path"""
+
+        if self.exists(path):
+            raise FileExistsError(path)
+
+        dst_id = self._get_item_id(self._parent(path), create=create_parents)
+        basename = posixpath.basename(path.rstrip("/"))
+        self._gdrive_create_dir(dst_id, basename)
 
     @_gdrive_retry
     def mv(self, path1, path2, maxdepth=None, **kwargs):
