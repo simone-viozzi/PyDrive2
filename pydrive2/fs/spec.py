@@ -6,8 +6,7 @@ import os
 import posixpath
 import threading
 from collections import defaultdict
-from contextlib import contextmanager
-
+from contextlib import contextmanager, suppress
 from fsspec.spec import AbstractFileSystem
 from funcy import cached_property, retry, wrap_prop, wrap_with
 from funcy.py3 import cat
@@ -440,12 +439,22 @@ class GDriveFileSystem(AbstractFileSystem):
         contents = []
         for item in self._gdrive_list_ids(dir_ids):
             item_path = posixpath.join(root_path, item["title"])
+
+            owner = item.get("owners", [{}])[0]
+            if owner:
+                ownerIsAuthenticatedUser = owner.get(
+                    "isAuthenticatedUser", False
+                )
+            else:
+                ownerIsAuthenticatedUser = False
+
             if item["mimeType"] == FOLDER_MIME_TYPE:
                 contents.append(
                     {
                         "type": "directory",
                         "name": item_path.rstrip("/") + "/",
                         "size": 0,
+                        "ownerIsAuthenticatedUser": ownerIsAuthenticatedUser,
                     }
                 )
             else:
@@ -455,6 +464,7 @@ class GDriveFileSystem(AbstractFileSystem):
                         "name": item_path,
                         "size": int(item["fileSize"]),
                         "checksum": item.get("md5Checksum"),
+                        "ownerIsAuthenticatedUser": ownerIsAuthenticatedUser,
                     }
                 )
 
@@ -466,6 +476,61 @@ class GDriveFileSystem(AbstractFileSystem):
         else:
             return [content["name"] for content in contents]
 
+    def change_owner(self, path, tmp_folder_name="tmp"):
+
+        tmp_path = posixpath.join(path, tmp_folder_name)
+        self.mkdir(tmp_path)
+
+        self._change_owner(path, tmp_path)
+
+    def _change_owner(self, path, tmp_path):
+
+        for curr_path, dirs, files in self.walk(path, detail=True, maxdepth=1):
+
+            curr_tmp_folder = posixpath.join(
+                tmp_path, curr_path.replace("/", "@")
+            )
+
+            for name, file in files.items():
+                if file["ownerIsAuthenticatedUser"] is False:
+                    print(f"file {name} is not owned by you")
+
+                    with suppress(FileExistsError):
+                        self.mkdir(curr_tmp_folder)
+                    self.mv(file["name"], curr_tmp_folder)
+
+                    self.cp(
+                        posixpath.join(curr_tmp_folder, name),
+                        posixpath.join(curr_path, name),
+                    )
+
+            for name, dir in dirs.items():
+                if dir["name"].rstrip("/") != tmp_path:
+                    if dir["ownerIsAuthenticatedUser"] is False:
+                        print(f"dir {name} is not owned by you")
+
+                        with suppress(FileExistsError):
+                            self.mkdir(curr_tmp_folder)
+                        self.mv(dir["name"], curr_tmp_folder)
+
+                        self.mkdir(dir["name"])
+
+                        for _, dirs, files in self.walk(
+                            posixpath.join(curr_tmp_folder, name),
+                            detail=True,
+                            maxdepth=1,
+                        ):
+                            for name, tmp_file in files.items():
+                                self.mv(tmp_file["name"], dir["name"])
+                            for name, tmp_dir in dirs.items():
+                                self.mv(tmp_dir["name"], dir["name"])
+
+                    # 90% not needed, walk do this already
+                    self._change_owner(
+                        posixpath.join(curr_path, name), tmp_path
+                    )
+
+    """
     def find(self, path, detail=False, **kwargs):
         bucket, base = self.split_path(path)
 
@@ -507,6 +572,7 @@ class GDriveFileSystem(AbstractFileSystem):
             return {content["name"]: content for content in contents}
         else:
             return [content["name"] for content in contents]
+        """
 
     def upload_fobj(self, stream, rpath, callback=None, **kwargs):
         parent_id = self._get_item_id(self._parent(rpath), create=True)
@@ -586,6 +652,9 @@ class GDriveFileSystem(AbstractFileSystem):
             file1["parents"] = [{"id": file2_parent_id}]
 
         # TODO need to invalidate the cache for the old path, see #232
+        with suppress(KeyError):
+            del self._ids_cache["ids"][file1_id]
+
         file1.Upload()
 
     def get_file(self, lpath, rpath, callback=None, block_size=None, **kwargs):
