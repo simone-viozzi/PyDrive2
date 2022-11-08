@@ -270,6 +270,27 @@ class GDriveFileSystem(AbstractFileSystem):
             cache["dirs"][path].append(item_id)
             cache["ids"][item_id] = path
 
+    def _remove_cache_path_id(self, path, item_id, cache=None):
+        cache = cache or self._ids_cache
+
+        idis_to_remove = []
+        _, base = self.split_path(path)
+
+        dirs = {}
+        for p, idis in cache["dirs"].items():
+            if p.startswith(base):
+                idis_to_remove.extend(idis)
+            else:
+                dirs[p] = idis
+        cache["dirs"] = dirs
+
+        for idis in idis_to_remove:
+            with suppress(KeyError):
+                del cache["ids"][idis]
+
+        with suppress(KeyError):
+            del cache["ids"][item_id]
+
     @cached_property
     def _list_params(self):
         params = {"corpora": "default"}
@@ -651,11 +672,9 @@ class GDriveFileSystem(AbstractFileSystem):
             file2_parent_id = self._get_item_id(dst_parent)
             file1["parents"] = [{"id": file2_parent_id}]
 
-        # TODO need to invalidate the cache for the old path, see #232
-        with suppress(KeyError):
-            del self._ids_cache["ids"][file1_id]
-
         file1.Upload()
+
+        self._remove_cache_path_id(path1, file1_id)
 
     def get_file(self, lpath, rpath, callback=None, block_size=None, **kwargs):
         item_id = self._get_item_id(lpath)
@@ -705,6 +724,8 @@ class GDriveFileSystem(AbstractFileSystem):
     def rm_file(self, path):
         item_id = self._get_item_id(path)
         self._gdrive_delete_file(item_id)
+
+        self._remove_cache_path_id(path, item_id)
 
     @_gdrive_retry
     def _gdrive_delete_file(self, item_id):
